@@ -1,3 +1,13 @@
+// Copyright 2025 BoostSecurity.io
+//
+// Licensed under the AGPLv3 License.
+// You may obtain a copy of the License at
+//
+//     https://www.gnu.org/licenses/agpl-3.0.html
+
+// puant is a command-line tool for detecting obfuscated malware in source code.
+// It works by identifying strings with a high ratio of Unicode Private Use Area (PUA)
+// characters, a technique sometimes used for malware obfuscation.
 package main
 
 import (
@@ -7,7 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
@@ -16,16 +28,29 @@ import (
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 )
 
-const PUA_THRESHOLD = 0.50 // 50% PUA characters threshold - anything above this is sketchy AF
+const (
+	// PUA_THRESHOLD is the default threshold for the ratio of PUA characters in a string.
+	PUA_THRESHOLD = 0.50
 
-// FileResult represents the scan result for a single file
+	// Unicode Private Use Areas (PUA) ranges.
+	puaBMPStart   = '\uE000'
+	puaBMPEnd     = '\uF8FF'
+	puaTagsStart  = '\U000E0000'
+	puaTagsEnd    = '\U000E0FFF'
+	puaSuppAStart = '\U000F0000'
+	puaSuppAEnd   = '\U000FFFFD'
+	puaSuppBStart = '\U00100000'
+	puaSuppBEnd   = '\U0010FFFD'
+)
+
+// FileResult represents the scan result for a single file.
 type FileResult struct {
 	Path     string  `json:"path"`
 	Sketchy  bool    `json:"sketchy"`
 	MaxRatio float64 `json:"max_ratio,omitempty"`
 }
 
-// ScanResult represents the overall scan results
+// ScanResult represents the overall scan results for all processed files.
 type ScanResult struct {
 	Threshold    float64      `json:"threshold"`
 	TotalFiles   int          `json:"total_files"`
@@ -52,7 +77,7 @@ func main() {
 	path := flag.Arg(0)
 	results, err := scanPath(path, *threshold, *scanGit)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error scanning: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error scanning path %q: %v\n", path, err)
 		os.Exit(1)
 	}
 
@@ -69,38 +94,37 @@ func main() {
 	}
 }
 
-// isPUACharacter checks if a rune is in the Private Use Area or related obfuscation ranges
+// isPUACharacter checks if a rune is in the Private Use Area or related obfuscation ranges.
 func isPUACharacter(r rune) bool {
-	// Unicode ranges commonly used for obfuscation:
-	// U+E000 to U+F8FF (BMP Private Use Area)
-	// U+E0000 to U+E0FFF (Tags, Variation Selectors Supplement - often used for obfuscation)
-	// U+F0000 to U+FFFFD (Supplementary Private Use Area-A)
-	// U+100000 to U+10FFFD (Supplementary Private Use Area-B)
-	return (r >= 0xE000 && r <= 0xF8FF) ||
-		(r >= 0xE0000 && r <= 0xE0FFF) ||
-		(r >= 0xF0000 && r <= 0xFFFFD) ||
-		(r >= 0x100000 && r <= 0x10FFFD)
+	return (r >= puaBMPStart && r <= puaBMPEnd) ||
+		(r >= puaTagsStart && r <= puaTagsEnd) ||
+		(r >= puaSuppAStart && r <= puaSuppAEnd) ||
+		(r >= puaSuppBStart && r <= puaSuppBEnd)
 }
 
-// getLanguageParser returns the appropriate tree-sitter parser for a file
+// LanguageMap maps file extensions to their corresponding tree-sitter language.
+var LanguageMap = map[string]*sitter.Language{
+	".js":   sitter.NewLanguage(tree_sitter_javascript.Language()),
+	".jsx":  sitter.NewLanguage(tree_sitter_javascript.Language()),
+	".mjs":  sitter.NewLanguage(tree_sitter_javascript.Language()),
+	".cjs":  sitter.NewLanguage(tree_sitter_javascript.Language()),
+	".py":   sitter.NewLanguage(tree_sitter_python.Language()),
+	".pyw":  sitter.NewLanguage(tree_sitter_python.Language()),
+	".go":   sitter.NewLanguage(tree_sitter_go.Language()),
+	".java": sitter.NewLanguage(tree_sitter_java.Language()),
+}
+
+// getLanguageParser returns the appropriate tree-sitter parser for a file.
 func getLanguageParser(filePath string) *sitter.Language {
 	ext := strings.ToLower(filepath.Ext(filePath))
+	return LanguageMap[ext]
+}
 
-	switch ext {
-	case ".js", ".jsx", ".mjs", ".cjs":
-		return sitter.NewLanguage(tree_sitter_javascript.Language())
-	case ".py", ".pyw":
-		return sitter.NewLanguage(tree_sitter_python.Language())
-	case ".go":
-		return sitter.NewLanguage(tree_sitter_go.Language())
-	case ".java":
-		return sitter.NewLanguage(tree_sitter_java.Language())
-	// TODO: Add C# support once package issues are resolved
-	// case ".cs":
-	//   return sitter.NewLanguage(tree_sitter_csharp.Language())
-	default:
-		return nil
-	}
+// isSupportedFile checks if a file has a supported extension.
+func isSupportedFile(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	_, supported := LanguageMap[ext]
+	return supported
 }
 
 // extractStringsTreeSitter extracts string literals using tree-sitter
@@ -216,7 +240,9 @@ func calculatePUARatio(s string) float64 {
 	return float64(puaCount) / float64(totalChars)
 }
 
-// exceedsThreshold checks if string has PUA ratio above threshold (short-circuits for efficiency)
+// exceedsThreshold checks if a string's PUA ratio is likely to exceed a given threshold.
+// It uses a short-circuiting algorithm for efficiency, stopping the scan as soon as
+// the threshold is confirmed to be met.
 func exceedsThreshold(s string, threshold float64) bool {
 	if len(s) == 0 {
 		return false
@@ -226,25 +252,28 @@ func exceedsThreshold(s string, threshold float64) bool {
 	totalChars := len(runes)
 	puaCount := 0
 
-	for i, r := range runes {
+	// The minimum number of PUA characters required to meet the threshold.
+	minPUACount := int(float64(totalChars) * threshold)
+
+	if minPUACount == 0 {
+		// If threshold is 0, any PUA character will exceed it.
+		// If string is non-empty and has no PUA, this will still be efficient.
+		minPUACount = 1
+	}
+
+	for _, r := range runes {
 		if isPUACharacter(r) {
 			puaCount++
-			// Short circuit: if we've found enough PUA chars to exceed threshold, return early
-			currentRatio := float64(puaCount) / float64(i+1)
-			// Best case: even if remaining chars are all non-PUA, we'd still exceed threshold
-			bestCaseRatio := float64(puaCount) / float64(totalChars)
-			if bestCaseRatio >= threshold {
-				return true
-			}
-			// Current ratio check for early exit
-			if currentRatio >= threshold && float64(puaCount)/float64(totalChars) >= threshold {
+			// If we have found enough PUA characters to meet the threshold,
+			// we can exit early.
+			if puaCount >= minPUACount {
 				return true
 			}
 		}
 	}
 
-	finalRatio := float64(puaCount) / float64(totalChars)
-	return finalRatio >= threshold
+	// Final check after iterating through the entire string.
+	return puaCount >= minPUACount
 }
 
 // isFileSketchy determines if a file contains suspicious PUA-obfuscated strings
@@ -267,7 +296,7 @@ func isFileSketchy(filePath string, content []byte, threshold float64) (bool, fl
 	return false, maxRatio
 }
 
-// scanPath scans a file or directory recursively
+// scanPath scans a file or directory recursively, using a worker pool for concurrency.
 func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -279,68 +308,109 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 		Files:     []FileResult{},
 	}
 
-	if info.IsDir() {
-		err = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-
-			// Skip .git directories unless scanGit flag is set
-			if info.IsDir() && info.Name() == ".git" && !scanGit {
-				return filepath.SkipDir
-			}
-
-			if !info.IsDir() && isSupportedFile(filePath) {
-				scanFile(filePath, threshold, result)
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to walk path %s: %w", path, err)
-		}
-	} else {
+	if !info.IsDir() {
+		// If it's a single file, scan it directly without concurrency.
 		scanFile(path, threshold, result)
+		return result, nil
+	}
+
+	// --- Concurrent Scanning for Directories ---
+	var wg sync.WaitGroup
+	// Use a channel to distribute file paths to worker goroutines.
+	filesChan := make(chan string, 100)
+	// Use a channel to collect results from workers.
+	resultsChan := make(chan FileResult, 100)
+
+	// Start worker goroutines.
+	numWorkers := runtime.NumCPU()
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for filePath := range filesChan {
+				fileResult := scanSingleFile(filePath, threshold)
+				if fileResult != nil {
+					resultsChan <- *fileResult
+				}
+			}
+		}()
+	}
+
+	// Walk the directory and send files to the workers.
+	walkErr := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && info.Name() == ".git" && !scanGit {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() && isSupportedFile(filePath) {
+			filesChan <- filePath
+		}
+		return nil
+	})
+
+	close(filesChan)
+
+	// Wait for all workers to finish, then close the results channel.
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect and aggregate results.
+	for fileResult := range resultsChan {
+		result.TotalFiles++
+		if fileResult.Sketchy {
+			result.SketchyFiles++
+		} else {
+			result.CleanFiles++
+		}
+		result.Files = append(result.Files, fileResult)
+	}
+
+	if walkErr != nil {
+		return nil, fmt.Errorf("failed to walk path %s: %w", path, walkErr)
 	}
 
 	return result, nil
 }
 
-// isSupportedFile checks if a file has a supported extension
-func isSupportedFile(filePath string) bool {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	supportedExts := []string{".js", ".jsx", ".mjs", ".cjs", ".py", ".pyw", ".go", ".java"}
-	for _, supported := range supportedExts {
-		if ext == supported {
-			return true
-		}
-	}
-	return false
-}
-
-// scanFile scans a single file and updates the result
-func scanFile(filePath string, threshold float64, result *ScanResult) {
+// scanSingleFile scans a single file and returns a FileResult.
+// This function is designed to be called from a worker goroutine.
+func scanSingleFile(filePath string, threshold float64) *FileResult {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		// Skip files we can't read
-		return
+		// Skip files that cannot be read.
+		return nil
 	}
 
 	isSketchy, maxRatio := isFileSketchy(filePath, content, threshold)
 
-	fileResult := FileResult{
+	fileResult := &FileResult{
 		Path:    filePath,
 		Sketchy: isSketchy,
 	}
 
 	if isSketchy {
 		fileResult.MaxRatio = maxRatio
-		result.SketchyFiles++
-	} else {
-		result.CleanFiles++
 	}
 
-	result.TotalFiles++
-	result.Files = append(result.Files, fileResult)
+	return fileResult
+}
+
+// scanFile scans a single file and updates the result (for non-concurrent scans).
+func scanFile(filePath string, threshold float64, result *ScanResult) {
+	fileResult := scanSingleFile(filePath, threshold)
+	if fileResult != nil {
+		result.TotalFiles++
+		if fileResult.Sketchy {
+			result.SketchyFiles++
+		} else {
+			result.CleanFiles++
+		}
+		result.Files = append(result.Files, *fileResult)
+	}
 }
 
 // outputJSON outputs results in JSON format
