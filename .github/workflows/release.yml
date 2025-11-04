@@ -28,6 +28,10 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: false
+    - name: Set up cross-compilers
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@v6
       with:
@@ -35,4 +39,12 @@ jobs:
         version: ${{ env.GO_RELEASER_VERSION }}
         args: release --clean
       env:
+        # The CC and CXX env vars are templated in the .goreleaser.yaml file
+        # and will be populated by GoReleaser for each target platform.
+        CC_amd64: gcc
+        CXX_amd64: g++
+        CC_arm64: aarch64-linux-gnu-gcc
+        CXX_arm64: aarch64-linux-gnu-g++
+        CC_arm: arm-linux-gnueabihf-gcc
+        CXX_arm: arm-linux-gnueabihf-g++
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
