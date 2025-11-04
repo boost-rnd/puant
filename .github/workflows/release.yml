@@ -39,12 +39,4 @@ jobs:
         version: ${{ env.GO_RELEASER_VERSION }}
         args: release --clean
       env:
-        # The CC and CXX env vars are templated in the .goreleaser.yaml file
-        # and will be populated by GoReleaser for each target platform.
-        CC_amd64: gcc
-        CXX_amd64: g++
-        CC_arm64: aarch64-linux-gnu-gcc
-        CXX_arm64: aarch64-linux-gnu-g++
-        CC_arm: arm-linux-gnueabihf-gcc
-        CXX_arm: arm-linux-gnueabihf-g++
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
