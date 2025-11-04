@@ -271,7 +271,7 @@ func isFileSketchy(filePath string, content []byte, threshold float64) (bool, fl
 func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to stat path %s: %w", path, err)
 	}
 
 	result := &ScanResult{
@@ -296,7 +296,7 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to walk path %s: %w", path, err)
 		}
 	} else {
 		scanFile(path, threshold, result)
