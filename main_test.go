@@ -27,7 +27,8 @@ func TestBenignFiles(t *testing.T) {
 				t.Fatalf("Failed to read file %s: %v", tt.filePath, err)
 			}
 
-			if isFileSketchy(tt.filePath, content) {
+			isSketchy, _ := isFileSketchy(tt.filePath, content, PUA_THRESHOLD)
+			if isSketchy {
 				t.Errorf("File %s was incorrectly flagged as sketchy (false positive)", tt.filePath)
 			}
 		})
@@ -54,7 +55,8 @@ func TestSketchyFiles(t *testing.T) {
 				t.Fatalf("Failed to read file %s: %v", tt.filePath, err)
 			}
 
-			if !isFileSketchy(tt.filePath, content) {
+			isSketchy, _ := isFileSketchy(tt.filePath, content, PUA_THRESHOLD)
+			if !isSketchy {
 				t.Errorf("File %s was not detected as sketchy (false negative)", tt.filePath)
 			}
 		})
@@ -184,7 +186,7 @@ func BenchmarkPUADetection(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		isFileSketchy("testdata/sketchy_high_pua_js.js", content)
+		isFileSketchy("testdata/sketchy_high_pua_js.js", content, PUA_THRESHOLD)
 	}
 }
 
