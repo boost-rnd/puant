@@ -34,7 +34,7 @@ func TestBenignFiles(t *testing.T) {
 				t.Fatalf("Failed to read file %s: %v", tt.filePath, err)
 			}
 
-			isSketchy, _ := isFileSketchy(tt.filePath, content, PUA_THRESHOLD)
+			isSketchy, _, _, _ := isFileSketchy(tt.filePath, content, PUA_THRESHOLD)
 			if isSketchy {
 				t.Errorf("File %s was incorrectly flagged as sketchy (false positive)", tt.filePath)
 			}
@@ -62,7 +62,7 @@ func TestSketchyFiles(t *testing.T) {
 				t.Fatalf("Failed to read file %s: %v", tt.filePath, err)
 			}
 
-			isSketchy, _ := isFileSketchy(tt.filePath, content, PUA_THRESHOLD)
+			isSketchy, _, _, _ := isFileSketchy(tt.filePath, content, PUA_THRESHOLD)
 			if !isSketchy {
 				t.Errorf("File %s was not detected as sketchy (false negative)", tt.filePath)
 			}
@@ -194,5 +194,38 @@ func BenchmarkPUADetection(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		isFileSketchy("testdata/sketchy_high_pua_js.js", content, PUA_THRESHOLD)
+	}
+}
+
+func TestMinStringLength(t *testing.T) {
+	oldMinStringLength := minStringLength
+	defer func() { minStringLength = oldMinStringLength }()
+
+	testContent := "const short = \"\uE000\";\nconst medium = \"ab\uE000\uE001\";\nconst long = \"abcdef\uE000\uE001\uE002\uE003\uE004\uE005\";"
+
+	tests := []struct {
+		name             string
+		minLength        int
+		expectSketchy    bool
+		expectShortCount int
+	}{
+		{"Min length 1, should flag short string", 1, true, 0},
+		{"Min length 3, should skip 1-char and flag 4-char", 3, true, 1},
+		{"Min length 10, should skip all but longest", 10, true, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minStringLength = tt.minLength
+			isSketchy, _, shortCount, _ := isFileSketchy("test.js", []byte(testContent), PUA_THRESHOLD)
+
+			if isSketchy != tt.expectSketchy {
+				t.Errorf("Expected sketchy=%v, got %v", tt.expectSketchy, isSketchy)
+			}
+
+			if shortCount != tt.expectShortCount {
+				t.Errorf("Expected shortCount=%d, got %d", tt.expectShortCount, shortCount)
+			}
+		})
 	}
 }

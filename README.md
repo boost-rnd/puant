@@ -67,6 +67,12 @@ Options:
         Output format: text or json (default "text")
   -scan-git
         Include .git directories in scan (default: false)
+  -min-string-length int
+        Minimum string length to check for PUA (default 3)
+  -max-file-size int
+        Maximum file size to scan in bytes (default 10485760)
+  -verbose
+        Enable verbose progress output
 ```
 
 ### Examples
@@ -86,26 +92,41 @@ Options:
 ./puant -scan-git .
 ```
 
+**Adjust minimum string length to reduce false positives:**
+```bash
+./puant -min-string-length 5 src/
+```
+
+### Handling False Positives
+
+PUA characters are legitimately used in:
+- Icon fonts (Font Awesome, Material Icons)
+- Mathematical typesetting (KaTeX, MathJax)
+- Custom web fonts
+
+The `-min-string-length` flag (default: 3) helps reduce false positives by skipping very short strings that are often single icon characters. Files with short PUA strings are reported separately as "FILES WITH SHORT PUA STRINGS" rather than flagged as sketchy.
+
+To detect all PUA usage including single characters (useful for thorough audits):
+```bash
+./puant -min-string-length 1 src/
+```
+
 ### Output Formats
 
 #### Text Output (default)
 
 ```
-Scan Results (threshold: 50.00%)
+Scan Results (threshold: 50.00%, min-length: 3)
 =====================================
 
 SKETCHY FILES (2):
   [!] suspicious.js (max ratio: 100.00%)
   [!] obfuscated.py (max ratio: 85.71%)
 
-CLEAN FILES (5):
-  [✓] main.go
-  [✓] utils.js
-  [✓] config.py
-  [✓] handler.java
-  [✓] app.js
+FILES WITH SHORT PUA STRINGS (1):
+  [~] icons.js (17 short strings, max ratio: 100.00%)
 
-Summary: 7 total, 2 sketchy, 5 clean
+Summary: 8 scanned, 2 sketchy, 0 skipped
 ```
 
 #### JSON Output
@@ -113,14 +134,21 @@ Summary: 7 total, 2 sketchy, 5 clean
 ```json
 {
   "threshold": 0.5,
-  "total_files": 2,
+  "total_files": 3,
   "sketchy_files": 1,
-  "clean_files": 1,
+  "clean_files": 2,
+  "skipped_files": 0,
   "files": [
     {
       "path": "suspicious.js",
       "sketchy": true,
       "max_ratio": 1.0
+    },
+    {
+      "path": "icons.js",
+      "sketchy": false,
+      "short_pua_strings": 17,
+      "short_pua_max_ratio": 1.0
     },
     {
       "path": "safe.js",

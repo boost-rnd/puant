@@ -58,8 +58,9 @@ const (
 
 // Global configuration
 var (
-	verbose     bool
-	maxFileSize int64
+	verbose         bool
+	maxFileSize     int64
+	minStringLength int
 )
 
 // ParserPool manages a pool of tree-sitter parsers for reuse
@@ -125,9 +126,11 @@ var globalParserPool = NewParserPool()
 
 // FileResult represents the scan result for a single file.
 type FileResult struct {
-	Path     string  `json:"path"`
-	Sketchy  bool    `json:"sketchy"`
-	MaxRatio float64 `json:"max_ratio,omitempty"`
+	Path             string  `json:"path"`
+	Sketchy          bool    `json:"sketchy"`
+	MaxRatio         float64 `json:"max_ratio,omitempty"`
+	ShortPUAStrings  int     `json:"short_pua_strings,omitempty"`   // Count of strings that were too short but had high PUA
+	ShortPUAMaxRatio float64 `json:"short_pua_max_ratio,omitempty"` // Highest PUA ratio among short strings
 }
 
 // SkippedFile represents a file that was skipped during scanning
@@ -154,10 +157,12 @@ func main() {
 	scanGit := flag.Bool("scan-git", false, "Include .git directories in scan (default: false)")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose progress output")
 	maxFileSizeFlag := flag.Int64("max-file-size", MAX_FILE_SIZE, "Maximum file size to scan in bytes (0 = unlimited)")
+	minStringLengthFlag := flag.Int("min-string-length", 3, "Minimum string length to check for PUA (shorter strings are skipped and reported)")
 	flag.Parse()
 
 	verbose = *verboseFlag
 	maxFileSize = *maxFileSizeFlag
+	minStringLength = *minStringLengthFlag
 
 	if flag.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "puant: A tool to detect obfuscated malware in source code.")
@@ -404,24 +409,33 @@ func exceedsThreshold(s string, threshold float64) bool {
 	return puaCount >= minPUACount
 }
 
-// isFileSketchy determines if a file contains suspicious PUA-obfuscated strings
-// Returns (isSketchy, maxRatio) where maxRatio is the highest PUA ratio found
-func isFileSketchy(filePath string, content []byte, threshold float64) (bool, float64) {
+func isFileSketchy(filePath string, content []byte, threshold float64) (bool, float64, int, float64) {
 	strings := extractStringsTreeSitter(filePath, content)
 	maxRatio := 0.0
+	shortPUACount := 0
+	shortPUAMaxRatio := 0.0
 
 	for _, str := range strings {
+		strLen := len([]rune(str))
 		ratio := calculatePUARatio(str)
+
+		if strLen < minStringLength && ratio >= threshold {
+			shortPUACount++
+			if ratio > shortPUAMaxRatio {
+				shortPUAMaxRatio = ratio
+			}
+			continue
+		}
+
 		if ratio > maxRatio {
 			maxRatio = ratio
 		}
-		// Use the short-circuiting threshold check
 		if exceedsThreshold(str, threshold) {
-			return true, maxRatio
+			return true, maxRatio, shortPUACount, shortPUAMaxRatio
 		}
 	}
 
-	return false, maxRatio
+	return false, maxRatio, shortPUACount, shortPUAMaxRatio
 }
 
 // scanPath scans a file or directory recursively, using a worker pool for concurrency.
@@ -606,7 +620,7 @@ func scanSingleFile(filePath string, size int64, threshold float64) *FileResult 
 		return nil
 	}
 
-	isSketchy, maxRatio := isFileSketchy(filePath, content, threshold)
+	isSketchy, maxRatio, shortPUACount, shortPUAMaxRatio := isFileSketchy(filePath, content, threshold)
 
 	fileResult := &FileResult{
 		Path:    filePath,
@@ -615,6 +629,11 @@ func scanSingleFile(filePath string, size int64, threshold float64) *FileResult 
 
 	if isSketchy {
 		fileResult.MaxRatio = maxRatio
+	}
+
+	if shortPUACount > 0 {
+		fileResult.ShortPUAStrings = shortPUACount
+		fileResult.ShortPUAMaxRatio = shortPUAMaxRatio
 	}
 
 	return fileResult
@@ -646,9 +665,8 @@ func outputJSON(result *ScanResult) {
 	encoder.Encode(result) //nolint:errcheck
 }
 
-// outputText outputs results in human-readable text format
 func outputText(result *ScanResult) {
-	fmt.Printf("Scan Results (threshold: %.2f%%)\n", result.Threshold*100)
+	fmt.Printf("Scan Results (threshold: %.2f%%, min-length: %d)\n", result.Threshold*100, minStringLength)
 	fmt.Printf("=====================================\n\n")
 
 	if result.TotalFiles == 0 && result.SkippedFiles == 0 {
@@ -656,7 +674,6 @@ func outputText(result *ScanResult) {
 		return
 	}
 
-	// Print sketchy files first
 	if result.SketchyFiles > 0 {
 		fmt.Printf("SKETCHY FILES (%d):\n", result.SketchyFiles)
 		for _, file := range result.Files {
@@ -667,9 +684,24 @@ func outputText(result *ScanResult) {
 		fmt.Println()
 	}
 
-	// Don't print clean files - they're just noise
+	shortPUACount := 0
+	for _, file := range result.Files {
+		if file.ShortPUAStrings > 0 {
+			shortPUACount++
+		}
+	}
 
-	// Print skipped files
+	if shortPUACount > 0 {
+		fmt.Printf("FILES WITH SHORT PUA STRINGS (%d):\n", shortPUACount)
+		for _, file := range result.Files {
+			if file.ShortPUAStrings > 0 {
+				fmt.Printf("  [~] %s (%d short strings, max ratio: %.2f%%)\n",
+					file.Path, file.ShortPUAStrings, file.ShortPUAMaxRatio*100)
+			}
+		}
+		fmt.Println()
+	}
+
 	if result.SkippedFiles > 0 {
 		fmt.Printf("SKIPPED FILES (%d):\n", result.SkippedFiles)
 		for _, file := range result.Skipped {
@@ -682,7 +714,6 @@ func outputText(result *ScanResult) {
 		fmt.Println()
 	}
 
-	// Summary
 	fmt.Printf("Summary: %d scanned, %d sketchy, %d skipped\n",
 		result.TotalFiles, result.SketchyFiles, result.SkippedFiles)
 }
