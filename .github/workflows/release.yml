@@ -28,19 +28,10 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: false
-    - name: Set up cross-compilers for Linux and macOS
+    - name: Set up cross-compilers
       run: |
-        # Install Linux cross-compilers
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-        # Install osxcross for macOS cross-compilation
-        sudo apt-get install -y clang libxml2-dev
-        git clone https://github.com/tpoechtrager/osxcross.git
-        cd osxcross
-        git checkout 121ce150c7857a9474dfff8a8e431482806b3e1b
-        sudo ./tools/get_osxcross.sh
-        echo "$(pwd)/target/bin" | sudo tee -a $GITHUB_PATH
-        cd ..
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@v6
       with:
