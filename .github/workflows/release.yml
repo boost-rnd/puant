@@ -28,10 +28,6 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: false
-    - name: Set up cross-compilers
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@v6
       with:
