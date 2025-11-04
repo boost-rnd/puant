@@ -178,199 +178,234 @@ func generateJavaScriptFile(stringCount int, avgStringLength int, puaRatio float
 
 // generatePythonFile creates synthetic Python code with many strings
 func generatePythonFile(stringCount int, avgStringLength int, puaRatio float64) string {
-	var code string
+	var builder strings.Builder
 	stringsAdded := 0
 
-	code += "# Auto-generated benchmark file\n"
-	code += "# Simulates real-world Python with varied string usage\n\n"
-	code += "import os\n"
-	code += "import json\n"
-	code += "from typing import Dict, List\n\n"
+	builder.WriteString("# Auto-generated benchmark file\n")
+	builder.WriteString("# Simulates real-world Python with varied string usage\n\n")
+	builder.WriteString("import os\n")
+	builder.WriteString("import json\n")
+	builder.WriteString("from typing import Dict, List\n\n")
 
 	// Constants and config
-	code += "CONFIG = {\n"
+	builder.WriteString("CONFIG = {\n")
 	configStrings := stringCount / 4
 	for i := 0; i < configStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "    \"key_" + intToString(i) + "\": \"" + str + "\",\n"
+		builder.WriteString("    \"key_")
+		builder.WriteString(intToString(i))
+		builder.WriteString("\": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "}\n\n"
+	builder.WriteString("}\n\n")
 
 	// Class with docstrings and methods
-	code += "class DataProcessor:\n"
-	code += "    \"\"\"Processes data with various string operations.\"\"\"\n\n"
-	code += "    def __init__(self):\n"
-	code += "        self.messages = [\n"
+	builder.WriteString("class DataProcessor:\n")
+	builder.WriteString("    \"\"\"Processes data with various string operations.\"\"\"\n\n")
+	builder.WriteString("    def __init__(self):\n")
+	builder.WriteString("        self.messages = [\n")
 	arrayStrings := stringCount / 5
 	for i := 0; i < arrayStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "            \"" + str + "\",\n"
+		builder.WriteString("            \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "        ]\n\n"
+	builder.WriteString("        ]\n\n")
 
 	// Method with multiline strings (triple quotes)
-	code += "    def get_template(self) -> str:\n"
-	code += "        return \"\"\"\n"
+	builder.WriteString("    def get_template(self) -> str:\n")
+	builder.WriteString("        return \"\"\"\n")
 	multilineStrings := stringCount / 6
 	for i := 0; i < multilineStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "        " + str + "\n"
+		builder.WriteString("        ")
+		builder.WriteString(str)
+		builder.WriteString("\n")
 		stringsAdded++
 	}
-	code += "        \"\"\"\n\n"
+	builder.WriteString("        \"\"\"\n\n")
 
 	// Method with f-strings
-	code += "    def format_data(self, index: int) -> str:\n"
-	code += "        templates = {\n"
+	builder.WriteString("    def format_data(self, index: int) -> str:\n")
+	builder.WriteString("        templates = {\n")
 	dictStrings := stringCount / 6
 	for i := 0; i < dictStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "            \"template_" + intToString(i) + "\": \"" + str + "\",\n"
+		builder.WriteString("            \"template_")
+		builder.WriteString(intToString(i))
+		builder.WriteString("\": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "        }\n"
-	code += "        return templates.get(f\"template_{index}\", \"default\")\n\n"
+	builder.WriteString("        }\n")
+	builder.WriteString("        return templates.get(f\"template_{index}\", \"default\")\n\n")
 
 	// Module-level dictionary with nested structures
-	code += "METADATA = {\n"
-	code += "    \"version\": \"1.0.0\",\n"
-	code += "    \"descriptions\": {\n"
+	builder.WriteString("METADATA = {\n")
+	builder.WriteString("    \"version\": \"1.0.0\",\n")
+	builder.WriteString("    \"descriptions\": {\n")
 	nestedStrings := stringCount / 8
 	for i := 0; i < nestedStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "        \"desc_" + intToString(i) + "\": \"" + str + "\",\n"
+		builder.WriteString("        \"desc_")
+		builder.WriteString(intToString(i))
+		builder.WriteString("\": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "    },\n"
-	code += "    \"multiline\": \"\"\"\n"
+	builder.WriteString("    },\n")
+	builder.WriteString("    \"multiline\": \"\"\"\n")
 	// Add remaining strings as multiline
 	for stringsAdded < stringCount {
 		length := varyLength(avgStringLength, stringsAdded)
 		str := generatePUAString(length, puaRatio)
-		code += "    " + str + "\n"
+		builder.WriteString("    ")
+		builder.WriteString(str)
+		builder.WriteString("\n")
 		stringsAdded++
 	}
-	code += "    \"\"\",\n"
-	code += "}\n\n"
+	builder.WriteString("    \"\"\",\n")
+	builder.WriteString("}\n\n")
 
-	code += "def main():\n"
-	code += "    processor = DataProcessor()\n"
-	code += "    print(processor.get_template())\n\n"
-	code += "if __name__ == \"__main__\":\n"
-	code += "    main()\n"
+	builder.WriteString("def main():\n")
+	builder.WriteString("    processor = DataProcessor()\n")
+	builder.WriteString("    print(processor.get_template())\n\n")
+	builder.WriteString("if __name__ == \"__main__\":\n")
+	builder.WriteString("    main()\n")
 
-	return code
+	return builder.String()
 }
 
 // generateGoFile creates synthetic Go code with many strings
 func generateGoFile(stringCount int, avgStringLength int, puaRatio float64) string {
-	var code string
+	var builder strings.Builder
 	stringsAdded := 0
 
-	code += "// Auto-generated benchmark file\n"
-	code += "// Simulates real-world Go with varied string usage\n"
-	code += "package test\n\n"
-	code += "import (\n"
-	code += "	\"fmt\"\n"
-	code += "	\"strings\"\n"
-	code += ")\n\n"
+	builder.WriteString("// Auto-generated benchmark file\n")
+	builder.WriteString("// Simulates real-world Go with varied string usage\n")
+	builder.WriteString("package test\n\n")
+	builder.WriteString("import (\n")
+	builder.WriteString("	\"fmt\"\n")
+	builder.WriteString("	\"strings\"\n")
+	builder.WriteString(")\n\n")
 
 	// Package-level constants
-	code += "var Config = map[string]string{\n"
+	builder.WriteString("var Config = map[string]string{\n")
 	configStrings := stringCount / 4
 	for i := 0; i < configStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "	\"key_" + intToString(i) + "\": \"" + str + "\",\n"
+		builder.WriteString("	\"key_")
+		builder.WriteString(intToString(i))
+		builder.WriteString("\": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "}\n\n"
+	builder.WriteString("}\n\n")
 
 	// Struct with string fields
-	code += "type DataHandler struct {\n"
-	code += "	Messages []string\n"
-	code += "	Templates map[string]string\n"
-	code += "}\n\n"
+	builder.WriteString("type DataHandler struct {\n")
+	builder.WriteString("	Messages []string\n")
+	builder.WriteString("	Templates map[string]string\n")
+	builder.WriteString("}\n\n")
 
 	// Constructor with slice initialization
-	code += "func NewDataHandler() *DataHandler {\n"
-	code += "	return &DataHandler{\n"
-	code += "		Messages: []string{\n"
+	builder.WriteString("func NewDataHandler() *DataHandler {\n")
+	builder.WriteString("	return &DataHandler{\n")
+	builder.WriteString("		Messages: []string{\n")
 	arrayStrings := stringCount / 5
 	for i := 0; i < arrayStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "			\"" + str + "\",\n"
+		builder.WriteString("			\"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "		},\n"
-	code += "		Templates: map[string]string{\n"
+	builder.WriteString("		},\n")
+	builder.WriteString("		Templates: map[string]string{\n")
 	mapStrings := stringCount / 6
 	for i := 0; i < mapStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "			\"tpl_" + intToString(i) + "\": \"" + str + "\",\n"
+		builder.WriteString("			\"tpl_")
+		builder.WriteString(intToString(i))
+		builder.WriteString("\": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "		},\n"
-	code += "	}\n"
-	code += "}\n\n"
+	builder.WriteString("		},\n")
+	builder.WriteString("	}\n")
+	builder.WriteString("}\n\n")
 
 	// Method with raw string literals (multiline)
-	code += "func (h *DataHandler) GetMultilineTemplate() string {\n"
-	code += "	return `\n"
+	builder.WriteString("func (h *DataHandler) GetMultilineTemplate() string {\n")
+	builder.WriteString("	return `\n")
 	multilineStrings := stringCount / 6
 	for i := 0; i < multilineStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += str + "\n"
+		builder.WriteString(str)
+		builder.WriteString("\n")
 		stringsAdded++
 	}
-	code += "`\n"
-	code += "}\n\n"
+	builder.WriteString("`\n")
+	builder.WriteString("}\n\n")
 
 	// Another method with map
-	code += "func (h *DataHandler) GetDescriptions() map[string]string {\n"
-	code += "	return map[string]string{\n"
+	builder.WriteString("func (h *DataHandler) GetDescriptions() map[string]string {\n")
+	builder.WriteString("	return map[string]string{\n")
 	descStrings := stringCount / 8
 	for i := 0; i < descStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "		\"desc_" + intToString(i) + "\": \"" + str + "\",\n"
+		builder.WriteString("		\"desc_")
+		builder.WriteString(intToString(i))
+		builder.WriteString("\": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "	}\n"
-	code += "}\n\n"
+	builder.WriteString("	}\n")
+	builder.WriteString("}\n\n")
 
 	// Package-level variable with remaining strings
-	code += "var Metadata = struct {\n"
-	code += "	Version string\n"
-	code += "	Data    []string\n"
-	code += "}{\n"
-	code += "	Version: \"1.0.0\",\n"
-	code += "	Data: []string{\n"
+	builder.WriteString("var Metadata = struct {\n")
+	builder.WriteString("	Version string\n")
+	builder.WriteString("	Data    []string\n")
+	builder.WriteString("}{\n")
+	builder.WriteString("	Version: \"1.0.0\",\n")
+	builder.WriteString("	Data: []string{\n")
 	for stringsAdded < stringCount {
 		length := varyLength(avgStringLength, stringsAdded)
 		str := generatePUAString(length, puaRatio)
-		code += "		\"" + str + "\",\n"
+		builder.WriteString("		\"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "	},\n"
-	code += "}\n\n"
+	builder.WriteString("	},\n")
+	builder.WriteString("}\n\n")
 
-	code += "func ProcessData() {\n"
-	code += "	handler := NewDataHandler()\n"
-	code += "	fmt.Println(handler.GetMultilineTemplate())\n"
-	code += "}\n"
+	builder.WriteString("func ProcessData() {\n")
+	builder.WriteString("	handler := NewDataHandler()\n")
+	builder.WriteString("	fmt.Println(handler.GetMultilineTemplate())\n")
+	builder.WriteString("}\n")
 
-	return code
+	return builder.String()
 }
 
 // BenchmarkScalability tests performance across different file sizes and PUA ratios
