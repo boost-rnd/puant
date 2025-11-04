@@ -32,6 +32,16 @@ builds:
         env:
           - CC=arm-linux-gnueabihf-gcc
           - CXX=arm-linux-gnueabihf-g++
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CC=x86_64-apple-darwin23-clang
+          - CXX=x8á6_64-apple-darwin23-clang++
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CC=aarch64-apple-darwin23-clang
+          - CXX=aarch64-apple-darwin23-clang++
 
 signs:
   - cmd: cosign
