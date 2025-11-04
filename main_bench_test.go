@@ -8,6 +8,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -63,98 +64,116 @@ func generatePUAString(length int, puaRatio float64) string {
 
 // generateJavaScriptFile creates synthetic JavaScript code with many strings
 func generateJavaScriptFile(stringCount int, avgStringLength int, puaRatio float64) string {
-	var code string
+	var builder strings.Builder
 	stringsAdded := 0
 
-	code += "// Auto-generated benchmark file\n"
-	code += "// Simulates real-world JavaScript with varied string usage\n\n"
+	builder.WriteString("// Auto-generated benchmark file\n")
+	builder.WriteString("// Simulates real-world JavaScript with varied string usage\n\n")
 
 	// Add some imports
-	code += "const crypto = require('crypto');\n"
-	code += "const path = require('path');\n\n"
+	builder.WriteString("const crypto = require('crypto');\n")
+	builder.WriteString("const path = require('path');\n\n")
 
 	// Config object with single-line strings
-	code += "const config = {\n"
+	builder.WriteString("const config = {\n")
 	configStrings := stringCount / 4
 	for i := 0; i < configStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "  key_" + intToString(i) + ": \"" + str + "\",\n"
+		builder.WriteString("  key_")
+		builder.WriteString(intToString(i))
+		builder.WriteString(": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "};\n\n"
+	builder.WriteString("};\n\n")
 
 	// Function with template literals (multiline)
-	code += "function processData(input) {\n"
-	code += "  const template = `\n"
+	builder.WriteString("function processData(input) {\n")
+	builder.WriteString("  const template = `\n")
 	multilineStrings := stringCount / 6
 	for i := 0; i < multilineStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "    " + str + "\n"
+		builder.WriteString("    ")
+		builder.WriteString(str)
+		builder.WriteString("\n")
 		stringsAdded++
 	}
-	code += "  `;\n"
-	code += "  return template.split('\\n').filter(x => x.length > 0);\n"
-	code += "}\n\n"
+	builder.WriteString("  `;\n")
+	builder.WriteString("  return template.split('\\n').filter(x => x.length > 0);\n")
+	builder.WriteString("}\n\n")
 
 	// Class with methods and strings
-	code += "class DataHandler {\n"
-	code += "  constructor() {\n"
-	code += "    this.messages = [\n"
+	builder.WriteString("class DataHandler {\n")
+	builder.WriteString("  constructor() {\n")
+	builder.WriteString("    this.messages = [\n")
 	arrayStrings := stringCount / 5
 	for i := 0; i < arrayStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "      \"" + str + "\",\n"
+		builder.WriteString("      \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "    ];\n"
-	code += "  }\n\n"
+	builder.WriteString("    ];\n")
+	builder.WriteString("  }\n\n")
 
-	code += "  getMessage(index) {\n"
-	code += "    return this.messages[index] || \"default\";\n"
-	code += "  }\n\n"
+	builder.WriteString("  getMessage(index) {\n")
+	builder.WriteString("    return this.messages[index] || \"default\";\n")
+	builder.WriteString("  }\n\n")
 
-	code += "  setMessages(msgs) {\n"
-	code += "    const defaults = {\n"
+	builder.WriteString("  setMessages(msgs) {\n")
+	builder.WriteString("    const defaults = {\n")
 	moreStrings := stringCount / 6
 	for i := 0; i < moreStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "      msg" + intToString(i) + ": \"" + str + "\",\n"
+		builder.WriteString("      msg")
+		builder.WriteString(intToString(i))
+		builder.WriteString(": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "    };\n"
-	code += "    this.messages = { ...defaults, ...msgs };\n"
-	code += "  }\n"
-	code += "}\n\n"
+	builder.WriteString("    };\n")
+	builder.WriteString("    this.messages = { ...defaults, ...msgs };\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("}\n\n")
 
 	// Object with nested structures
-	code += "const metadata = {\n"
-	code += "  version: \"1.0.0\",\n"
-	code += "  descriptions: {\n"
+	builder.WriteString("const metadata = {\n")
+	builder.WriteString("  version: \"1.0.0\",\n")
+	builder.WriteString("  descriptions: {\n")
 	nestedStrings := stringCount / 8
 	for i := 0; i < nestedStrings && stringsAdded < stringCount; i++ {
 		length := varyLength(avgStringLength, i)
 		str := generatePUAString(length, puaRatio)
-		code += "    desc" + intToString(i) + ": \"" + str + "\",\n"
+		builder.WriteString("    desc")
+		builder.WriteString(intToString(i))
+		builder.WriteString(": \"")
+		builder.WriteString(str)
+		builder.WriteString("\",\n")
 		stringsAdded++
 	}
-	code += "  },\n"
-	code += "  multiline: `\n"
+	builder.WriteString("  },\n")
+	builder.WriteString("  multiline: `\n")
 	// Add remaining strings as multiline
 	for stringsAdded < stringCount {
 		length := varyLength(avgStringLength, stringsAdded)
 		str := generatePUAString(length, puaRatio)
-		code += "    " + str + "\n"
+		builder.WriteString("    ")
+		builder.WriteString(str)
+		builder.WriteString("\n")
 		stringsAdded++
 	}
-	code += "  `,\n"
-	code += "};\n\n"
+	builder.WriteString("  `,\n")
+	builder.WriteString("};\n\n")
 
-	code += "module.exports = { config, DataHandler, processData, metadata };\n"
-	return code
+	builder.WriteString("module.exports = { config, DataHandler, processData, metadata };\n")
+	return builder.String()
 }
 
 // generatePythonFile creates synthetic Python code with many strings
@@ -357,12 +376,12 @@ func generateGoFile(stringCount int, avgStringLength int, puaRatio float64) stri
 // BenchmarkScalability tests performance across different file sizes and PUA ratios
 func BenchmarkScalability(b *testing.B) {
 	scenarios := []struct {
-		name       string
-		stringCnt  int
-		avgStrLen  int
-		puaRatio   float64
-		generator  func(int, int, float64) string
-		extension  string
+		name      string
+		stringCnt int
+		avgStrLen int
+		puaRatio  float64
+		generator func(int, int, float64) string
+		extension string
 	}{
 		// Small files (~5-15 KB)
 		{"JS_Small_NoPUA", 50, 100, 0.0, generateJavaScriptFile, ".js"},
