@@ -8,9 +8,6 @@ before:
 builds:
   - env:
       - CGO_ENABLED=1
-      # Needed to build the tree-sitter bindings
-      - CC={{ .Env.CC }}
-      - CXX={{ .Env.CXX }}
     goos:
       - linux
       - darwin
