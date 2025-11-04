@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
@@ -32,6 +35,12 @@ const (
 	// PUA_THRESHOLD is the default threshold for the ratio of PUA characters in a string.
 	PUA_THRESHOLD = 0.50
 
+	// MAX_FILE_SIZE is the default maximum file size to scan (10MB)
+	MAX_FILE_SIZE = 10 * 1024 * 1024
+
+	// FILE_TIMEOUT is the maximum time to spend scanning a single file
+	FILE_TIMEOUT = 5 * time.Second
+
 	// Unicode Private Use Areas (PUA) ranges.
 	puaBMPStart   = '\uE000'
 	puaBMPEnd     = '\uF8FF'
@@ -43,6 +52,12 @@ const (
 	puaSuppBEnd   = '\U0010FFFD'
 )
 
+// Global configuration
+var (
+	verbose     bool
+	maxFileSize int64
+)
+
 // FileResult represents the scan result for a single file.
 type FileResult struct {
 	Path     string  `json:"path"`
@@ -50,21 +65,34 @@ type FileResult struct {
 	MaxRatio float64 `json:"max_ratio,omitempty"`
 }
 
+// SkippedFile represents a file that was skipped during scanning
+type SkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	Size   int64  `json:"size,omitempty"`
+}
+
 // ScanResult represents the overall scan results for all processed files.
 type ScanResult struct {
-	Threshold    float64      `json:"threshold"`
-	TotalFiles   int          `json:"total_files"`
-	SketchyFiles int          `json:"sketchy_files"`
-	CleanFiles   int          `json:"clean_files"`
-	Files        []FileResult `json:"files"`
+	Threshold    float64       `json:"threshold"`
+	TotalFiles   int           `json:"total_files"`
+	SketchyFiles int           `json:"sketchy_files"`
+	CleanFiles   int           `json:"clean_files"`
+	SkippedFiles int           `json:"skipped_files"`
+	Files        []FileResult  `json:"files"`
+	Skipped      []SkippedFile `json:"skipped,omitempty"`
 }
 
 func main() {
-	// CLI flags
 	threshold := flag.Float64("threshold", PUA_THRESHOLD, "PUA ratio threshold (0.0-1.0)")
 	outputFormat := flag.String("format", "text", "Output format: text or json")
 	scanGit := flag.Bool("scan-git", false, "Include .git directories in scan (default: false)")
+	verboseFlag := flag.Bool("verbose", false, "Enable verbose progress output")
+	maxFileSizeFlag := flag.Int64("max-file-size", MAX_FILE_SIZE, "Maximum file size to scan in bytes (0 = unlimited)")
 	flag.Parse()
+
+	verbose = *verboseFlag
+	maxFileSize = *maxFileSizeFlag
 
 	if flag.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "puant: A tool to detect obfuscated malware in source code.")
@@ -75,20 +103,32 @@ func main() {
 	}
 
 	path := flag.Arg(0)
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Starting scan of: %s\n", path)
+		fmt.Fprintf(os.Stderr, "Threshold: %.2f%%, Max file size: ", *threshold*100)
+		if maxFileSize > 0 {
+			fmt.Fprintf(os.Stderr, "%d bytes (%.2f MB)\n", maxFileSize, float64(maxFileSize)/(1024*1024))
+		} else {
+			fmt.Fprintf(os.Stderr, "unlimited\n")
+		}
+		fmt.Fprintf(os.Stderr, "Workers: %d\n\n", runtime.NumCPU())
+	} else {
+		fmt.Fprintf(os.Stderr, "Scanning %s...\n", path)
+	}
+
 	results, err := scanPath(path, *threshold, *scanGit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error scanning path %q: %v\n", path, err)
 		os.Exit(1)
 	}
 
-	// Output results
 	if *outputFormat == "json" {
 		outputJSON(results)
 	} else {
 		outputText(results)
 	}
 
-	// Exit with error code if sketchy files found
 	if results.SketchyFiles > 0 {
 		os.Exit(1)
 	}
@@ -131,7 +171,6 @@ func isSupportedFile(filePath string) bool {
 func extractStringsTreeSitter(filePath string, content []byte) []string {
 	language := getLanguageParser(filePath)
 	if language == nil {
-		// Fallback to regex-based extraction for unsupported languages
 		return extractStringsRegex(string(content))
 	}
 
@@ -145,7 +184,6 @@ func extractStringsTreeSitter(filePath string, content []byte) []string {
 	var strings []string
 	root := tree.RootNode()
 
-	// Walk the AST and collect all string nodes
 	var walk func(*sitter.Node)
 	walk = func(node *sitter.Node) {
 		if node == nil {
@@ -154,7 +192,6 @@ func extractStringsTreeSitter(filePath string, content []byte) []string {
 
 		nodeType := node.Kind()
 
-		// String node types vary by language
 		isString := nodeType == "string" ||
 			nodeType == "string_literal" ||
 			nodeType == "interpreted_string_literal" ||
@@ -167,7 +204,6 @@ func extractStringsTreeSitter(filePath string, content []byte) []string {
 			end := node.EndByte()
 			text := string(content[start:end])
 
-			// Strip quote delimiters (", ', `) from the string
 			text = stripQuotes(text)
 
 			if len(text) > 0 {
@@ -175,7 +211,6 @@ func extractStringsTreeSitter(filePath string, content []byte) []string {
 			}
 		}
 
-		// Recursively walk children
 		for i := uint(0); i < node.ChildCount(); i++ {
 			child := node.Child(i)
 			walk(child)
@@ -190,7 +225,6 @@ func extractStringsTreeSitter(filePath string, content []byte) []string {
 func extractStringsRegex(content string) []string {
 	var strings []string
 
-	// Basic patterns for common string literals
 	patterns := []string{
 		`"(?:[^"\\]|\\.)*"`,
 		`'(?:[^'\\]|\\.)*'`,
@@ -211,7 +245,6 @@ func stripQuotes(s string) string {
 		return s
 	}
 
-	// Check if surrounded by matching quotes
 	if (s[0] == '"' && s[len(s)-1] == '"') ||
 		(s[0] == '\'' && s[len(s)-1] == '\'') ||
 		(s[0] == '`' && s[len(s)-1] == '`') {
@@ -303,9 +336,11 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 		return nil, fmt.Errorf("failed to stat path %s: %w", path, err)
 	}
 
+	// Pre-allocate with reasonable capacity to reduce reallocations
 	result := &ScanResult{
 		Threshold: threshold,
-		Files:     []FileResult{},
+		Files:     make([]FileResult, 0, 100),  // Pre-allocate for potential sketchy files
+		Skipped:   make([]SkippedFile, 0, 100), // Pre-allocate for potential skipped files
 	}
 
 	if !info.IsDir() {
@@ -316,10 +351,37 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 
 	// --- Concurrent Scanning for Directories ---
 	var wg sync.WaitGroup
+	var processedFiles, skippedFiles atomic.Int64
+
 	// Use a channel to distribute file paths to worker goroutines.
-	filesChan := make(chan string, 100)
+	type fileJob struct {
+		path string
+		size int64
+	}
+	filesChan := make(chan fileJob, 10000) // Larger buffer for better throughput
 	// Use a channel to collect results from workers.
-	resultsChan := make(chan FileResult, 100)
+	type scanOutput struct {
+		file    *FileResult
+		skipped *SkippedFile
+	}
+	resultsChan := make(chan scanOutput, 50000) // Very large buffer to handle massive codebases
+
+	// Start progress reporter (always on, verbose shows more detail)
+	progressDone := make(chan bool)
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				processed := processedFiles.Load()
+				skipped := skippedFiles.Load()
+				fmt.Fprintf(os.Stderr, "\rScanning... Processed: %d files, Skipped: %d files", processed, skipped)
+			case <-progressDone:
+				return
+			}
+		}
+	}()
 
 	// Start worker goroutines.
 	numWorkers := runtime.NumCPU()
@@ -327,11 +389,40 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for filePath := range filesChan {
-				fileResult := scanSingleFile(filePath, threshold)
-				if fileResult != nil {
-					resultsChan <- *fileResult
+			for job := range filesChan {
+				// Check file size limit
+				if maxFileSize > 0 && job.size > maxFileSize {
+					skippedFiles.Add(1)
+					resultsChan <- scanOutput{
+						skipped: &SkippedFile{
+							Path:   job.path,
+							Reason: "file too large",
+							Size:   job.size,
+						},
+					}
+					continue
 				}
+
+				// Scan file with timeout
+				ctx, cancel := context.WithTimeout(context.Background(), FILE_TIMEOUT)
+				fileResult := scanSingleFileWithTimeout(ctx, job.path, threshold)
+				cancel()
+
+				if fileResult == nil {
+					// File timed out or had an error
+					skippedFiles.Add(1)
+					resultsChan <- scanOutput{
+						skipped: &SkippedFile{
+							Path:   job.path,
+							Reason: "scan timeout or error",
+							Size:   job.size,
+						},
+					}
+					continue
+				}
+
+				processedFiles.Add(1)
+				resultsChan <- scanOutput{file: fileResult}
 			}
 		}()
 	}
@@ -344,30 +435,43 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 		if info.IsDir() && info.Name() == ".git" && !scanGit {
 			return filepath.SkipDir
 		}
-		if !info.IsDir() && isSupportedFile(filePath) {
-			filesChan <- filePath
+		if !info.IsDir() {
+			if !isSupportedFile(filePath) {
+				return nil
+			}
+			filesChan <- fileJob{
+				path: filePath,
+				size: info.Size(),
+			}
 		}
 		return nil
 	})
 
 	close(filesChan)
 
-	// Wait for all workers to finish, then close the results channel.
 	go func() {
 		wg.Wait()
 		close(resultsChan)
 	}()
 
-	// Collect and aggregate results.
-	for fileResult := range resultsChan {
-		result.TotalFiles++
-		if fileResult.Sketchy {
-			result.SketchyFiles++
-		} else {
-			result.CleanFiles++
+	for output := range resultsChan {
+		if output.file != nil {
+			result.TotalFiles++
+			if output.file.Sketchy {
+				result.SketchyFiles++
+				result.Files = append(result.Files, *output.file)
+			} else {
+				result.CleanFiles++
+			}
 		}
-		result.Files = append(result.Files, fileResult)
+		if output.skipped != nil {
+			result.SkippedFiles++
+			result.Skipped = append(result.Skipped, *output.skipped)
+		}
 	}
+
+	close(progressDone)
+	fmt.Fprintf(os.Stderr, "\rScanning complete: %d files processed, %d files skipped\n\n", processedFiles.Load(), skippedFiles.Load())
 
 	if walkErr != nil {
 		return nil, fmt.Errorf("failed to walk path %s: %w", path, walkErr)
@@ -376,9 +480,32 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 	return result, nil
 }
 
+// scanSingleFileWithTimeout scans a single file with a timeout.
+func scanSingleFileWithTimeout(ctx context.Context, filePath string, threshold float64) *FileResult {
+	resultChan := make(chan *FileResult, 1)
+
+	go func() {
+		resultChan <- scanSingleFile(filePath, threshold)
+	}()
+
+	select {
+	case result := <-resultChan:
+		return result
+	case <-ctx.Done():
+		// Timeout occurred
+		if verbose {
+			fmt.Fprintf(os.Stderr, "\nWarning: Timeout scanning file: %s\n", filePath)
+		}
+		return nil
+	}
+}
+
 // scanSingleFile scans a single file and returns a FileResult.
-// This function is designed to be called from a worker goroutine.
 func scanSingleFile(filePath string, threshold float64) *FileResult {
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Scanning: %s\n", filePath)
+	}
+
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		// Skip files that cannot be read.
@@ -425,7 +552,7 @@ func outputText(result *ScanResult) {
 	fmt.Printf("Scan Results (threshold: %.2f%%)\n", result.Threshold*100)
 	fmt.Printf("=====================================\n\n")
 
-	if result.TotalFiles == 0 {
+	if result.TotalFiles == 0 && result.SkippedFiles == 0 {
 		fmt.Println("No supported files found.")
 		return
 	}
@@ -441,18 +568,22 @@ func outputText(result *ScanResult) {
 		fmt.Println()
 	}
 
-	// Print clean files
-	if result.CleanFiles > 0 {
-		fmt.Printf("CLEAN FILES (%d):\n", result.CleanFiles)
-		for _, file := range result.Files {
-			if !file.Sketchy {
-				fmt.Printf("  [✓] %s\n", file.Path)
+	// Don't print clean files - they're just noise
+
+	// Print skipped files
+	if result.SkippedFiles > 0 {
+		fmt.Printf("SKIPPED FILES (%d):\n", result.SkippedFiles)
+		for _, file := range result.Skipped {
+			sizeStr := ""
+			if file.Size > 0 {
+				sizeStr = fmt.Sprintf(" (size: %.2f MB)", float64(file.Size)/(1024*1024))
 			}
+			fmt.Printf("  [-] %s - %s%s\n", file.Path, file.Reason, sizeStr)
 		}
 		fmt.Println()
 	}
 
 	// Summary
-	fmt.Printf("Summary: %d total, %d sketchy, %d clean\n",
-		result.TotalFiles, result.SketchyFiles, result.CleanFiles)
+	fmt.Printf("Summary: %d scanned, %d sketchy, %d skipped\n",
+		result.TotalFiles, result.SketchyFiles, result.SkippedFiles)
 }
