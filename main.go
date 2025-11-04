@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -41,6 +42,9 @@ const (
 	// FILE_TIMEOUT is the maximum time to spend scanning a single file
 	FILE_TIMEOUT = 5 * time.Second
 
+	// MMAP_THRESHOLD is the file size above which we use mmap (256KB)
+	MMAP_THRESHOLD = 256 * 1024
+
 	// Unicode Private Use Areas (PUA) ranges.
 	puaBMPStart   = '\uE000'
 	puaBMPEnd     = '\uF8FF'
@@ -57,6 +61,67 @@ var (
 	verbose     bool
 	maxFileSize int64
 )
+
+// ParserPool manages a pool of tree-sitter parsers for reuse
+type ParserPool struct {
+	pools map[string]*sync.Pool
+	mu    sync.RWMutex
+}
+
+func NewParserPool() *ParserPool {
+	return &ParserPool{
+		pools: make(map[string]*sync.Pool),
+	}
+}
+
+func (p *ParserPool) getPool(ext string) *sync.Pool {
+	p.mu.RLock()
+	pool, exists := p.pools[ext]
+	p.mu.RUnlock()
+
+	if exists {
+		return pool
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if pool, exists := p.pools[ext]; exists {
+		return pool
+	}
+
+	language := LanguageMap[ext]
+	if language == nil {
+		return nil
+	}
+
+	pool = &sync.Pool{
+		New: func() interface{} {
+			parser := sitter.NewParser()
+			parser.SetLanguage(language) //nolint:errcheck
+			return parser
+		},
+	}
+	p.pools[ext] = pool
+	return pool
+}
+
+func (p *ParserPool) Get(ext string) *sitter.Parser {
+	pool := p.getPool(ext)
+	if pool == nil {
+		return nil
+	}
+	return pool.Get().(*sitter.Parser)
+}
+
+func (p *ParserPool) Put(ext string, parser *sitter.Parser) {
+	pool := p.getPool(ext)
+	if pool != nil {
+		pool.Put(parser)
+	}
+}
+
+var globalParserPool = NewParserPool()
 
 // FileResult represents the scan result for a single file.
 type FileResult struct {
@@ -169,14 +234,12 @@ func isSupportedFile(filePath string) bool {
 
 // extractStringsTreeSitter extracts string literals using tree-sitter
 func extractStringsTreeSitter(filePath string, content []byte) []string {
-	language := getLanguageParser(filePath)
-	if language == nil {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	parser := globalParserPool.Get(ext)
+	if parser == nil {
 		return extractStringsRegex(string(content))
 	}
-
-	parser := sitter.NewParser()
-	defer parser.Close()
-	parser.SetLanguage(language) //nolint:errcheck
+	defer globalParserPool.Put(ext, parser)
 
 	tree := parser.Parse(content, nil)
 	defer tree.Close()
@@ -252,6 +315,38 @@ func stripQuotes(s string) string {
 	}
 
 	return s
+}
+
+// readFileContent reads file content, using mmap for large files
+func readFileContent(filePath string, size int64) ([]byte, error) {
+	if size < MMAP_THRESHOLD {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
+		}
+		return content, nil
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	data, err := syscall.Mmap(int(file.Fd()), 0, int(size), syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		content, readErr := os.ReadFile(filePath)
+		if readErr != nil {
+			return nil, fmt.Errorf("mmap failed and fallback read failed for %s: %w", filePath, readErr)
+		}
+		return content, nil
+	}
+
+	result := make([]byte, len(data))
+	copy(result, data)
+	syscall.Munmap(data) //nolint:errcheck
+
+	return result, nil
 }
 
 // calculatePUARatio returns the ratio of PUA characters to total characters
@@ -405,7 +500,7 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 
 				// Scan file with timeout
 				ctx, cancel := context.WithTimeout(context.Background(), FILE_TIMEOUT)
-				fileResult := scanSingleFileWithTimeout(ctx, job.path, threshold)
+				fileResult := scanSingleFileWithTimeout(ctx, job.path, job.size, threshold)
 				cancel()
 
 				if fileResult == nil {
@@ -481,11 +576,11 @@ func scanPath(path string, threshold float64, scanGit bool) (*ScanResult, error)
 }
 
 // scanSingleFileWithTimeout scans a single file with a timeout.
-func scanSingleFileWithTimeout(ctx context.Context, filePath string, threshold float64) *FileResult {
+func scanSingleFileWithTimeout(ctx context.Context, filePath string, size int64, threshold float64) *FileResult {
 	resultChan := make(chan *FileResult, 1)
 
 	go func() {
-		resultChan <- scanSingleFile(filePath, threshold)
+		resultChan <- scanSingleFile(filePath, size, threshold)
 	}()
 
 	select {
@@ -501,14 +596,13 @@ func scanSingleFileWithTimeout(ctx context.Context, filePath string, threshold f
 }
 
 // scanSingleFile scans a single file and returns a FileResult.
-func scanSingleFile(filePath string, threshold float64) *FileResult {
+func scanSingleFile(filePath string, size int64, threshold float64) *FileResult {
 	if verbose {
 		fmt.Fprintf(os.Stderr, "Scanning: %s\n", filePath)
 	}
 
-	content, err := os.ReadFile(filePath)
+	content, err := readFileContent(filePath, size)
 	if err != nil {
-		// Skip files that cannot be read.
 		return nil
 	}
 
@@ -528,7 +622,12 @@ func scanSingleFile(filePath string, threshold float64) *FileResult {
 
 // scanFile scans a single file and updates the result (for non-concurrent scans).
 func scanFile(filePath string, threshold float64, result *ScanResult) {
-	fileResult := scanSingleFile(filePath, threshold)
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return
+	}
+
+	fileResult := scanSingleFile(filePath, info.Size(), threshold)
 	if fileResult != nil {
 		result.TotalFiles++
 		if fileResult.Sketchy {
