@@ -23,7 +23,7 @@ dependencies:
         repo_id: 197814629
     'actions/checkout@v4.3.1':
         ref: 'v4.3.1'
-        commit: 'sha1-34e114876b0b11c390a56381ad16ebd13914f8d6'
+        commit: 'sha1-34e114876b0b11c390a56381ad16ebd13914f8d5'
         owner_id: 44036562
         repo_id: 197814629
     'actions/setup-go@v4.3.0':
