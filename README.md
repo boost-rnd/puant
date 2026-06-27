@@ -2,6 +2,8 @@
 
 > *puant* (French) = stinky, smelly 💨
 
+
+
 A fast, tree-sitter-powered detector for obfuscated malware hidden in source code.
 
 `puant` scans source code files for strings with a high ratio of Unicode Private Use Area (PUA) characters. By parsing code into an Abstract Syntax Tree (AST), it accurately targets string literals while minimizing false positives.
