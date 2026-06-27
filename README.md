@@ -1,7 +1,5 @@
 # puant 🦨
 
-
-
 > *puant* (French) = stinky, smelly 💨
 
 A fast, tree-sitter-powered detector for obfuscated malware hidden in source code.
