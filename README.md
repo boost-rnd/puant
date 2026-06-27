@@ -1,4 +1,4 @@
-# puant 🦨
+# puant 🦨  
 
 > *puant* (French) = stinky, smelly 💨
 
